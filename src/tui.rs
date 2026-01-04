@@ -5,6 +5,7 @@ use crossterm::event::KeyEventKind;
 use ratatui::DefaultTerminal;
 use ratatui::layout::Spacing;
 use ratatui::prelude::*;
+
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::*;
 
@@ -16,45 +17,6 @@ pub fn tui_start(geometry_filename: String) -> io::Result<()> {
     //assigning geometry file name
     tui.gmesh_para.geometry_file = geometry_filename;
 
-    // tui.gmesh_para.vol_phy_list.push(VolPhys {
-    //     name: String::from("Rogers"),
-    //     phys_id: String::from("101"),
-    //     vol_ids: String::from("1,2,3,4,5,56,6,7,6,5,4"),
-    // });
-    // tui.gmesh_para.vol_phy_list.push(VolPhys {
-    //     name: String::from("PEC_T"),
-    //     phys_id: String::from("102"),
-    //     vol_ids: String::from("1,2,3,4,5,5,5,4"),
-    // });
-    // tui.gmesh_para.vol_phy_list.push(VolPhys {
-    //     name: String::from("Dielec_4"),
-    //     phys_id: String::from("104"),
-    //     vol_ids: String::from("4,5,56,6,5,4"),
-    // });
-
-    // tui.gmesh_para.surf_phy_list.push(SurfPhys {
-    //     name: String::from("ABC"),
-    //     phys_id: String::from("1"),
-    //     surf_ids: String::from("1,2"),
-    // });
-
-    // tui.gmesh_para.surf_phy_list.push(SurfPhys {
-    //     name: String::from("PEC_S"),
-    //     phys_id: String::from("2"),
-    //     surf_ids: String::from("3,4"),
-    // });
-
-    // tui.gmesh_para.surf_phy_list.push(SurfPhys {
-    //     name: String::from("Huy"),
-    //     phys_id: String::from("3"),
-    //     surf_ids: String::from("4,5,6,7,8"),
-    // });
-    // tui.gmesh_para.surf_phy_list.push(SurfPhys {
-    //     name: String::from("IE"),
-    //     phys_id: String::from("9"),
-    //     surf_ids: String::from("10,12,13"),
-    // });
-
     ratatui::run(|terminal| tui.run(terminal))
 }
 
@@ -65,12 +27,38 @@ enum TypeMode {
     Mesh,
 }
 
+enum OperaMode {
+    Select,
+    Modify,
+}
+
+enum ModifyType {
+    VolName,
+    VolPID,
+    VolVID,
+    SurName,
+    SurPID,
+    SurSID,
+    MeshVal,
+    None,
+}
+struct Cursor {
+    begin_x: u16,
+    begin_y: u16,
+    char_idx: u16,
+    modify_type: ModifyType,
+} //the actual x=begin_x + char_idx, y=begin_y
+
 pub struct TUI {
     exit: bool,
     gmesh_para: GmshPara,
     table_state: TableState, //this state is shared
-
     cur_type: TypeMode,
+
+    input_buf: Vec<String>,
+    opreation_mode: OperaMode,
+
+    cursor: Cursor,
 }
 
 impl TUI {
@@ -80,6 +68,14 @@ impl TUI {
             gmesh_para: GmshPara::new(),
             table_state: TableState::new(),
             cur_type: TypeMode::None,
+            input_buf: Vec::new(),
+            opreation_mode: OperaMode::Select,
+            cursor: Cursor {
+                begin_x: 0,
+                begin_y: 0,
+                char_idx: 0,
+                modify_type: ModifyType::None,
+            },
         }
     }
 }
@@ -88,7 +84,17 @@ impl TUI {
     fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         while !self.exit {
             //calling to draw
-            terminal.draw(|frame| frame.render_widget(&*self, frame.area()))?;
+            terminal.draw(|frame| {
+                frame.render_widget(&mut *self, frame.area());
+
+                //plot cursor in modifying mode
+                if let OperaMode::Modify = self.opreation_mode {
+                    frame.set_cursor_position(Position::new(
+                        self.cursor.begin_x + self.cursor.char_idx,
+                        self.cursor.begin_y,
+                    ));
+                }
+            })?;
 
             //use manipulation process
             match crossterm::event::read()? {
@@ -101,18 +107,46 @@ impl TUI {
     }
 
     fn handle_key_event(&mut self, key_evt: crossterm::event::KeyEvent) -> io::Result<()> {
-        match (key_evt.kind, key_evt.code) {
-            (KeyEventKind::Press, KeyCode::Esc) => self.exit = true,
-            (KeyEventKind::Press, KeyCode::Down) => self.table_state_down(),
-            (KeyEventKind::Press, KeyCode::Up) => self.table_state_up(),
-            (KeyEventKind::Press, KeyCode::Left) => self.type_mode_left(),
-            (KeyEventKind::Press, KeyCode::Right) => self.type_mode_right(),
-            _ => {}
+        match self.opreation_mode {
+            OperaMode::Select => match (key_evt.kind, key_evt.code) {
+                (KeyEventKind::Press, KeyCode::Esc) => self.exit = true,
+                (KeyEventKind::Press, KeyCode::Down) => self.table_state_down(),
+                (KeyEventKind::Press, KeyCode::Up) => self.table_state_up(),
+                (KeyEventKind::Press, KeyCode::Left) => self.type_mode_left(),
+                (KeyEventKind::Press, KeyCode::Right) => self.type_mode_right(),
+
+                (KeyEventKind::Press, KeyCode::Enter) => self.select_to_modify(),
+                (KeyEventKind::Press, KeyCode::Char('a')) => {
+                    self.gmesh_para.apply_mesh();
+                }
+
+                (KeyEventKind::Press, KeyCode::Backspace | KeyCode::Delete) => {
+                    self.delete_selected()
+                }
+                _ => {}
+            },
+            OperaMode::Modify => match (key_evt.kind, key_evt.code) {
+                (KeyEventKind::Press, KeyCode::Esc) => {
+                    self.opreation_mode = OperaMode::Select;
+                    self.cursor.modify_type = ModifyType::None;
+                }
+                (KeyEventKind::Press, KeyCode::Enter) => self.confirm_modification(),
+
+                (KeyEventKind::Press, KeyCode::Tab) => self.modify_tab(),
+                (KeyEventKind::Press, KeyCode::Char(ch)) => self.char_insert(ch),
+                (KeyEventKind::Press, KeyCode::Backspace) => self.char_backspace(), //delete the char before cursor
+                (KeyEventKind::Press, KeyCode::Delete) => self.char_delete(), //delete the char selected by the cursor
+                (KeyEventKind::Press, KeyCode::Left) => self.cursor_left(),
+                (KeyEventKind::Press, KeyCode::Right) => self.cursor_right(),
+
+                _ => {}
+            },
         }
 
         Ok(())
     }
 
+    ///////////////////////////////////// Select Mode
     fn table_state_down(&mut self) {
         if let Some(idx) = self.table_state.selected() {
             match self.cur_type {
@@ -273,9 +307,408 @@ impl TUI {
             }
         }
     }
+
+    fn select_to_modify(&mut self) {
+        if let Some(idx) = self.table_state.selected() {
+            self.opreation_mode = OperaMode::Modify;
+            //setting up input buffer
+            match self.cur_type {
+                TypeMode::Volume => {
+                    self.input_buf.clear();
+                    if idx < self.gmesh_para.vol_phy_list.len() {
+                        //exsiting parameters selected
+                        let temp_vol_phy = self.gmesh_para.vol_phy_list[idx].clone();
+
+                        self.input_buf.push(temp_vol_phy.name);
+                        self.input_buf.push(temp_vol_phy.phys_id);
+                        self.input_buf.push(temp_vol_phy.vol_ids);
+
+                        //set cursor
+                        self.cursor.modify_type = ModifyType::VolName;
+                    } else {
+                        //adding parameters
+                        self.input_buf.push(String::new());
+                        self.input_buf.push(String::new());
+                        self.input_buf.push(String::new());
+
+                        //set cursor
+                        self.cursor.modify_type = ModifyType::VolName;
+                    }
+
+                    self.cursor.char_idx = self.input_buf[0].len() as u16;
+                }
+
+                TypeMode::Surface => {
+                    self.input_buf.clear();
+                    if idx < self.gmesh_para.surf_phy_list.len() {
+                        //exsiting parameters selected
+                        let temp_surf_phy = self.gmesh_para.surf_phy_list[idx].clone();
+
+                        self.input_buf.push(temp_surf_phy.name);
+                        self.input_buf.push(temp_surf_phy.phys_id);
+                        self.input_buf.push(temp_surf_phy.surf_ids);
+
+                        //set cursor
+                        self.cursor.modify_type = ModifyType::SurName;
+                    } else {
+                        //adding parameters
+                        self.input_buf.push(String::new());
+                        self.input_buf.push(String::new());
+                        self.input_buf.push(String::new());
+
+                        //set cursor
+                        self.cursor.modify_type = ModifyType::SurName;
+                    }
+                    self.cursor.char_idx = self.input_buf[0].len() as u16;
+                }
+                TypeMode::Mesh => {
+                    self.input_buf.clear();
+                    match idx {
+                        0 => {
+                            self.input_buf.push(String::from("MaxSize"));
+                            self.input_buf
+                                .push(self.gmesh_para.mesh_paras.max_size.clone());
+
+                            //set cursor
+                            self.cursor.modify_type = ModifyType::MeshVal;
+                            self.cursor.char_idx = self.input_buf[1].len() as u16;
+                        }
+                        _ => {
+                            self.input_buf.push(String::new());
+                            self.input_buf.push(String::new());
+
+                            //set cursor
+                            self.cursor.modify_type = ModifyType::MeshVal;
+                            self.cursor.char_idx = 0;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn delete_selected(&mut self) {
+        if let Some(select_idx) = self.table_state.selected() {
+            match self.cur_type {
+                TypeMode::Volume => {
+                    if select_idx < self.gmesh_para.vol_phy_list.len() {
+                        self.gmesh_para.vol_phy_list.remove(select_idx);
+                    }
+                }
+                TypeMode::Surface => {
+                    if select_idx < self.gmesh_para.surf_phy_list.len() {
+                        self.gmesh_para.surf_phy_list.remove(select_idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /////////////////////////// Modify Mode
+    fn modify_tab(&mut self) {
+        match self.cursor.modify_type {
+            ModifyType::VolName => {
+                self.cursor.modify_type = ModifyType::VolPID;
+                self.cursor.char_idx = self.input_buf[1].len() as u16;
+            }
+            ModifyType::VolPID => {
+                self.cursor.modify_type = ModifyType::VolVID;
+                self.cursor.char_idx = self.input_buf[2].len() as u16;
+            }
+            ModifyType::VolVID => {
+                self.cursor.modify_type = ModifyType::VolName;
+                self.cursor.char_idx = self.input_buf[0].len() as u16;
+            }
+            ModifyType::SurName => {
+                self.cursor.modify_type = ModifyType::SurPID;
+                self.cursor.char_idx = self.input_buf[1].len() as u16;
+            }
+            ModifyType::SurPID => {
+                self.cursor.modify_type = ModifyType::SurSID;
+                self.cursor.char_idx = self.input_buf[2].len() as u16;
+            }
+            ModifyType::SurSID => {
+                self.cursor.modify_type = ModifyType::SurName;
+                self.cursor.char_idx = self.input_buf[0].len() as u16;
+            }
+
+            _ => {}
+        }
+    }
+
+    fn char_insert(&mut self, ch: char) {
+        match self.cursor.modify_type {
+            ModifyType::VolName | ModifyType::SurName => {
+                let char_idx = self.cursor.char_idx;
+                self.input_buf[0].insert(char_idx as usize, ch);
+                self.cursor.char_idx += 1;
+            }
+            ModifyType::VolPID | ModifyType::SurPID => {
+                if ch.is_ascii_digit() {
+                    let char_idx = self.cursor.char_idx;
+                    self.input_buf[1].insert(char_idx as usize, ch);
+                    self.cursor.char_idx += 1;
+                }
+            }
+            ModifyType::VolVID | ModifyType::SurSID => {
+                if ch.is_ascii_digit() || ch == ',' {
+                    let char_idx = self.cursor.char_idx;
+                    self.input_buf[2].insert(char_idx as usize, ch);
+                    self.cursor.char_idx += 1;
+                }
+            }
+
+            ModifyType::MeshVal => {
+                if ch.is_ascii_digit() || ch == '.' {
+                    let char_idx = self.cursor.char_idx;
+                    self.input_buf[1].insert(char_idx as usize, ch);
+                    self.cursor.char_idx += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn char_backspace(&mut self) {
+        match self.cursor.modify_type {
+            ModifyType::VolName | ModifyType::SurName => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx > 0 {
+                    self.input_buf[0].remove((char_idx - 1) as usize);
+                    self.cursor.char_idx -= 1;
+                }
+            }
+            ModifyType::VolPID | ModifyType::SurPID => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx > 0 {
+                    self.input_buf[1].remove((char_idx - 1) as usize);
+                    self.cursor.char_idx -= 1;
+                }
+            }
+            ModifyType::VolVID | ModifyType::SurSID => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx > 0 {
+                    self.input_buf[2].remove((char_idx - 1) as usize);
+                    self.cursor.char_idx -= 1;
+                }
+            }
+
+            ModifyType::MeshVal => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx > 0 {
+                    self.input_buf[1].remove((char_idx - 1) as usize);
+                    self.cursor.char_idx -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn char_delete(&mut self) {
+        match self.cursor.modify_type {
+            ModifyType::VolName | ModifyType::SurName => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx < self.input_buf[0].len() as u16 && (!self.input_buf[0].is_empty()) {
+                    self.input_buf[0].remove(char_idx as usize);
+                }
+            }
+            ModifyType::VolPID | ModifyType::SurPID => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx < self.input_buf[1].len() as u16 && (!self.input_buf[1].is_empty()) {
+                    self.input_buf[1].remove(char_idx as usize);
+                }
+            }
+            ModifyType::VolVID | ModifyType::SurSID => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx < self.input_buf[2].len() as u16 && (!self.input_buf[2].is_empty()) {
+                    self.input_buf[2].remove(char_idx as usize);
+                }
+            }
+
+            ModifyType::MeshVal => {
+                let char_idx = self.cursor.char_idx;
+                if char_idx < self.input_buf[1].len() as u16 && (!self.input_buf[1].is_empty()) {
+                    self.input_buf[1].remove(char_idx as usize);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn cursor_left(&mut self) {
+        match self.cursor.modify_type {
+            ModifyType::VolName => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::VolVID;
+                    self.cursor.char_idx = self.input_buf[2].len() as u16;
+                }
+            }
+            ModifyType::VolPID => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::VolName;
+                    self.cursor.char_idx = self.input_buf[0].len() as u16;
+                }
+            }
+            ModifyType::VolVID => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::VolPID;
+                    self.cursor.char_idx = self.input_buf[1].len() as u16;
+                }
+            }
+            ModifyType::SurName => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::SurSID;
+                    self.cursor.char_idx = self.input_buf[2].len() as u16;
+                }
+            }
+            ModifyType::SurPID => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::SurName;
+                    self.cursor.char_idx = self.input_buf[0].len() as u16;
+                }
+            }
+            ModifyType::SurSID => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::SurPID;
+                    self.cursor.char_idx = self.input_buf[1].len() as u16;
+                }
+            }
+            ModifyType::MeshVal => {
+                if self.cursor.char_idx > 0 {
+                    self.cursor.char_idx -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn cursor_right(&mut self) {
+        match self.cursor.modify_type {
+            ModifyType::VolName => {
+                if self.cursor.char_idx < self.input_buf[0].len() as u16 {
+                    self.cursor.char_idx += 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::VolPID;
+                    self.cursor.char_idx = 0;
+                }
+            }
+            ModifyType::VolPID => {
+                if self.cursor.char_idx < self.input_buf[1].len() as u16 {
+                    self.cursor.char_idx += 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::VolVID;
+                    self.cursor.char_idx = 0;
+                }
+            }
+            ModifyType::VolVID => {
+                if self.cursor.char_idx < self.input_buf[2].len() as u16 {
+                    self.cursor.char_idx += 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::VolName;
+                    self.cursor.char_idx = 0;
+                }
+            }
+            ModifyType::SurName => {
+                if self.cursor.char_idx < self.input_buf[0].len() as u16 {
+                    self.cursor.char_idx += 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::SurPID;
+                    self.cursor.char_idx = 0;
+                }
+            }
+            ModifyType::SurPID => {
+                if self.cursor.char_idx < self.input_buf[1].len() as u16 {
+                    self.cursor.char_idx += 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::SurSID;
+                    self.cursor.char_idx = 0;
+                }
+            }
+            ModifyType::SurSID => {
+                if self.cursor.char_idx < self.input_buf[2].len() as u16 {
+                    self.cursor.char_idx += 1;
+                } else {
+                    self.cursor.modify_type = ModifyType::SurName;
+                    self.cursor.char_idx = 0;
+                }
+            }
+            ModifyType::MeshVal => {
+                if self.cursor.char_idx < self.input_buf[1].len() as u16 {
+                    self.cursor.char_idx += 1;
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    fn confirm_modification(&mut self) {
+        self.opreation_mode = OperaMode::Select;
+        self.cursor.modify_type = ModifyType::None;
+
+        if let Some(selected_idx) = self.table_state.selected() {
+            match self.cur_type {
+                TypeMode::Volume => {
+                    if selected_idx < self.gmesh_para.vol_phy_list.len() {
+                        //changing existing parameters
+                        self.gmesh_para.vol_phy_list[selected_idx] = VolPhys {
+                            name: self.input_buf[0].clone(),
+                            phys_id: self.input_buf[1].clone(),
+                            vol_ids: self.input_buf[2].clone(),
+                        };
+                    } else {
+                        //new parameters
+                        self.gmesh_para.vol_phy_list.push(VolPhys {
+                            name: self.input_buf[0].clone(),
+                            phys_id: self.input_buf[1].clone(),
+                            vol_ids: self.input_buf[2].clone(),
+                        });
+                    }
+                }
+                TypeMode::Surface => {
+                    if selected_idx < self.gmesh_para.surf_phy_list.len() {
+                        //changing existing parameters
+                        self.gmesh_para.surf_phy_list[selected_idx] = SurfPhys {
+                            name: self.input_buf[0].clone(),
+                            phys_id: self.input_buf[1].clone(),
+                            surf_ids: self.input_buf[2].clone(),
+                        };
+                    } else {
+                        //new parameters
+                        self.gmesh_para.surf_phy_list.push(SurfPhys {
+                            name: self.input_buf[0].clone(),
+                            phys_id: self.input_buf[1].clone(),
+                            surf_ids: self.input_buf[2].clone(),
+                        });
+                    }
+                }
+                TypeMode::Mesh => match selected_idx {
+                    0 => {
+                        self.gmesh_para.mesh_paras.max_size = self.input_buf[1].clone();
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
 }
 
-impl Widget for &TUI {
+impl Widget for &mut TUI {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
@@ -293,10 +726,29 @@ impl Widget for &TUI {
         .areas(up_area);
 
         //instructions
-        Line::from("Esc: Quit; ↑↓←→ to select; Enter to modify;")
-            .centered()
-            .yellow()
-            .render(bottom_area, buf);
+
+        let [bottom_left, bottom_right] =
+            Layout::horizontal([Constraint::Percentage(30), Constraint::Fill(1)])
+                .areas(bottom_area);
+
+        Line::from(String::from("Geometry File: ") + &self.gmesh_para.geometry_file)
+            .blue()
+            .render(bottom_left, buf);
+
+        match self.opreation_mode {
+            OperaMode::Select => {
+                Line::from("| Esc: quit | ↑↓←→: select | Enter: modify | a: apply to Gmsh |")
+                    .yellow()
+                    .render(bottom_right, buf);
+            }
+            OperaMode::Modify => {
+                Line::from("| Esc: quit | Enter: confirm | Tab: change selection |")
+                    .yellow()
+                    .render(bottom_right, buf);
+            }
+        }
+
+        //main UI rendering
 
         let vol_block = Block::new()
             .title("Physical Volume")
@@ -370,6 +822,138 @@ impl Widget for &TUI {
         StatefulWidget::render(vol_table, vol_area, buf, &mut vol_state);
         StatefulWidget::render(surf_table, surf_area, buf, &mut surf_state);
         StatefulWidget::render(mesh_table, mesh_area, buf, &mut mesh_state);
+
+        //render popup dialog in OpreaMode::Modify
+        if let OperaMode::Modify = self.opreation_mode {
+            let popup_area = popup_area(area, 60, 3);
+            Widget::render(Clear, popup_area, buf); //clean the background for popup
+
+            match self.cur_type {
+                TypeMode::Volume => {
+                    let [name_area, pid_area, vid_area] = Layout::horizontal([
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(20),
+                        Constraint::Fill(1),
+                    ])
+                    .spacing(Spacing::Overlap(1))
+                    .areas(popup_area);
+
+                    let name_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Name");
+                    let pid_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Physical ID");
+                    let vid_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Volume ID");
+
+                    Paragraph::new(self.input_buf[0].clone())
+                        .block(name_block)
+                        .render(name_area, buf);
+                    Paragraph::new(self.input_buf[1].clone())
+                        .block(pid_block)
+                        .render(pid_area, buf);
+                    Paragraph::new(self.input_buf[2].clone())
+                        .block(vid_block)
+                        .render(vid_area, buf);
+
+                    //set cursor
+                    match self.cursor.modify_type {
+                        ModifyType::VolName => {
+                            self.cursor.begin_x = name_area.x + 1;
+                            self.cursor.begin_y = name_area.y + 1;
+                        }
+                        ModifyType::VolPID => {
+                            self.cursor.begin_x = pid_area.x + 1;
+                            self.cursor.begin_y = pid_area.y + 1;
+                        }
+                        ModifyType::VolVID => {
+                            self.cursor.begin_x = vid_area.x + 1;
+                            self.cursor.begin_y = vid_area.y + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                TypeMode::Surface => {
+                    let [name_area, pid_area, sid_area] = Layout::horizontal([
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(20),
+                        Constraint::Fill(1),
+                    ])
+                    .spacing(Spacing::Overlap(1))
+                    .areas(popup_area);
+
+                    let name_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Name");
+                    let pid_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Physical ID");
+                    let sid_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Surface ID");
+
+                    Paragraph::new(self.input_buf[0].clone())
+                        .block(name_block)
+                        .render(name_area, buf);
+                    Paragraph::new(self.input_buf[1].clone())
+                        .block(pid_block)
+                        .render(pid_area, buf);
+                    Paragraph::new(self.input_buf[2].clone())
+                        .block(sid_block)
+                        .render(sid_area, buf);
+
+                    //set cursor
+                    match self.cursor.modify_type {
+                        ModifyType::SurName => {
+                            self.cursor.begin_x = name_area.x + 1;
+                            self.cursor.begin_y = name_area.y + 1;
+                        }
+                        ModifyType::SurPID => {
+                            self.cursor.begin_x = pid_area.x + 1;
+                            self.cursor.begin_y = pid_area.y + 1;
+                        }
+                        ModifyType::SurSID => {
+                            self.cursor.begin_x = sid_area.x + 1;
+                            self.cursor.begin_y = sid_area.y + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                TypeMode::Mesh => {
+                    let [name_area, val_area] =
+                        Layout::horizontal([Constraint::Percentage(40), Constraint::Fill(1)])
+                            .spacing(Spacing::Overlap(1))
+                            .areas(popup_area);
+
+                    let name_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Name");
+                    let val_block = Block::bordered()
+                        .merge_borders(MergeStrategy::Exact)
+                        .title("Value");
+
+                    Paragraph::new(self.input_buf[0].clone())
+                        .block(name_block)
+                        .render(name_area, buf);
+
+                    Paragraph::new(self.input_buf[1].clone())
+                        .block(val_block)
+                        .render(val_area, buf);
+
+                    //set cursor
+                    match self.cursor.modify_type {
+                        ModifyType::MeshVal => {
+                            self.cursor.begin_x = val_area.x + 1;
+                            self.cursor.begin_y = val_area.y + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                TypeMode::None => {}
+            }
+        }
     }
 }
 
@@ -400,4 +984,13 @@ fn row_convertion_mesh(mesh_para: &MeshPara, rows: &mut Vec<Row>) {
     let tmp = mesh_para.clone();
 
     rows.push(Row::new(vec![String::from("MaxSize"), tmp.max_size]));
+}
+
+fn popup_area(area: Rect, perc_x: u16, length_y: u16) -> Rect {
+    let vertical = Layout::vertical([Constraint::Length(length_y)]).flex(layout::Flex::Center);
+    let horizontal =
+        Layout::horizontal([Constraint::Percentage(perc_x)]).flex(layout::Flex::Center);
+    let [area] = vertical.areas(area);
+    let [area] = horizontal.areas(area);
+    area
 }

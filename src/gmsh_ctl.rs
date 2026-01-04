@@ -36,8 +36,12 @@ impl GmshPara {
             vol_phy_list: Vec::new(),
             surf_phy_list: Vec::new(),
             mesh_paras: MeshPara {
-                max_size: String::from("None"),
+                max_size: String::new(),
             },
         }
+    }
+
+    pub fn apply_mesh(&self) {
+        todo!()
     }
 }
