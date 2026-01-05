@@ -13,7 +13,7 @@ use ratatui::widgets::*;
 
 use crate::gmsh_ctl::*;
 
-pub fn tui_start(geometry_filename: String) -> io::Result<()> {
+pub fn termsh_run(geometry_filename: String) -> io::Result<()> {
     let mut tui = TUI::new();
 
     //assigning geometry file name
