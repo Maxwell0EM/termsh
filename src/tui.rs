@@ -4,6 +4,7 @@ use std::process::Child;
 
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
 use ratatui::DefaultTerminal;
 use ratatui::layout::Spacing;
 use ratatui::prelude::*;
@@ -140,7 +141,9 @@ impl TUI {
                 (KeyEventKind::Press, KeyCode::Right) => self.type_mode_right(),
 
                 (KeyEventKind::Press, KeyCode::Enter) => self.select_to_modify(),
-                (KeyEventKind::Press, KeyCode::Char('a')) => {
+                (KeyEventKind::Press, KeyCode::Char('a') | KeyCode::Char('A'))
+                    if !key_evt.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
                     if let Some(mut child) = self.gmsh_handle.take() {
                         //kill the previous Gmsh Child Process first
                         if let Err(e) = child.kill() {
@@ -148,6 +151,19 @@ impl TUI {
                         }
                     }
                     if let Ok(gmsh_handle) = self.gmesh_para.apply_mesh().0 {
+                        self.gmsh_handle = Some(gmsh_handle);
+                    }
+                }
+                (KeyEventKind::Press, KeyCode::Char('a') | KeyCode::Char('A'))
+                    if key_evt.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    if let Some(mut child) = self.gmsh_handle.take() {
+                        //kill the previous Gmsh Child Process first
+                        if let Err(e) = child.kill() {
+                            panic!("{}", e)
+                        }
+                    }
+                    if let Ok(gmsh_handle) = self.gmesh_para.apply_mesh_and_save_to_nas().0 {
                         self.gmsh_handle = Some(gmsh_handle);
                     }
                 }
@@ -769,7 +785,7 @@ impl Widget for &mut TUI {
 
         match self.opreation_mode {
             OperaMode::Select => {
-                Line::from("| Esc: quit | ↑↓←→: select | Enter: modify | a: apply to Gmsh |")
+                Line::from("| Esc: quit | ↑↓←→: select | Enter: modify | A: apply to Gmsh | Ctrl+A: apply & save to .nas |")
                     .yellow()
                     .render(bottom_right, buf);
             }
