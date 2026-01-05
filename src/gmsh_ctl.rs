@@ -1,5 +1,11 @@
 #![allow(dead_code)]
 
+use std::{
+    fs, io,
+    path::Path,
+    process::{Child, Stdio},
+};
+
 ///All use String because this will be put in .geo script as String
 #[derive(Debug, Clone)]
 pub struct VolPhys {
@@ -41,7 +47,72 @@ impl GmshPara {
         }
     }
 
-    pub fn apply_mesh(&self) {
-        todo!()
+    pub fn apply_mesh(&self) -> (io::Result<Child>, String) {
+        let mut scirpt_content = String::new();
+
+        //generate geometry file readin scripts
+        scirpt_content += &format!(
+            "SetFactory(\"OpenCASCADE\");\n\
+            Merge \"{}\";\n",
+            self.geometry_file
+        );
+
+        //generate geometry healing scripts
+        scirpt_content += &format!(
+            "/* Heal the step file */\n\
+            BooleanFragments{{ Volume{{:}}; Surface {{:}}; Delete; }}{{}}\n"
+        );
+
+        //generate Physical Volume scripts
+        scirpt_content += &format!("/* Physical Volume Grouping */\n");
+
+        for vol_phys in &self.vol_phy_list {
+            scirpt_content += &format!(
+                "Physical Volume(\"{}\",{})={{{}}};\n",
+                vol_phys.name, vol_phys.phys_id, vol_phys.vol_ids
+            );
+        }
+
+        //generate Physical Surface scripts
+        scirpt_content += &format!("/* Physical Surface Grouping */\n");
+
+        for sur_phys in &self.surf_phy_list {
+            scirpt_content += &format!(
+                "Physical Surface(\"{}\",{})={{{}}};\n",
+                sur_phys.name, sur_phys.phys_id, sur_phys.surf_ids
+            );
+        }
+
+        //generate Mesh Parameter scripts
+        scirpt_content += &format!("/* Mesh Setting */\n");
+
+        if !self.mesh_paras.max_size.is_empty() {
+            scirpt_content += &format!("Mesh.MeshSizeMax={};\n", self.mesh_paras.max_size);
+        }
+
+        //perform meshing scripts
+        scirpt_content += &format!("Mesh 3;\n");
+
+        //export content to temporary script file
+        let filename_prefix = Path::new(&self.geometry_file)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        let temp_script_file_name = filename_prefix.to_owned() + "_temp.geo";
+        if let Err(err) = fs::write(&temp_script_file_name, scirpt_content) {
+            panic!("Error when writing to temporary script file: {}", err)
+        }
+
+        //spawn Gmsh Child Process
+        let gmsh_child_handle = std::process::Command::new("gmsh")
+            .arg(&temp_script_file_name)
+            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("failed to start gmsh");
+
+        (Ok(gmsh_child_handle), temp_script_file_name)
     }
 }

@@ -1,4 +1,6 @@
+use std::fs;
 use std::io;
+use std::process::Child;
 
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEventKind;
@@ -17,7 +19,27 @@ pub fn tui_start(geometry_filename: String) -> io::Result<()> {
     //assigning geometry file name
     tui.gmesh_para.geometry_file = geometry_filename;
 
-    ratatui::run(|terminal| tui.run(terminal))
+    //start a Gmsh Child Process first to visualize the geometry
+    let (gmsh_handle_result, temp_file_name) = tui.gmesh_para.apply_mesh();
+
+    if let Ok(gmsh_handle) = gmsh_handle_result {
+        tui.gmsh_handle = Some(gmsh_handle);
+    }
+
+    let tui_res = ratatui::run(|terminal| tui.run(terminal));
+
+    //kill Gmsh Child Process
+    if let Some(mut gmsh_child) = tui.gmsh_handle.take() {
+        if let Err(e) = gmsh_child.kill() {
+            panic!("Failed to kill Gmsh: {}", e)
+        }
+    }
+    // clean up temporary file
+    if let Err(e) = fs::remove_file(temp_file_name) {
+        panic!("Failed to clean up: {}", e)
+    }
+
+    tui_res
 }
 
 enum TypeMode {
@@ -59,6 +81,7 @@ pub struct TUI {
     opreation_mode: OperaMode,
 
     cursor: Cursor,
+    gmsh_handle: Option<Child>,
 }
 
 impl TUI {
@@ -76,6 +99,7 @@ impl TUI {
                 char_idx: 0,
                 modify_type: ModifyType::None,
             },
+            gmsh_handle: None,
         }
     }
 }
@@ -117,7 +141,15 @@ impl TUI {
 
                 (KeyEventKind::Press, KeyCode::Enter) => self.select_to_modify(),
                 (KeyEventKind::Press, KeyCode::Char('a')) => {
-                    self.gmesh_para.apply_mesh();
+                    if let Some(mut child) = self.gmsh_handle.take() {
+                        //kill the previous Gmsh Child Process first
+                        if let Err(e) = child.kill() {
+                            panic!("{}", e)
+                        }
+                    }
+                    if let Ok(gmsh_handle) = self.gmesh_para.apply_mesh().0 {
+                        self.gmsh_handle = Some(gmsh_handle);
+                    }
                 }
 
                 (KeyEventKind::Press, KeyCode::Backspace | KeyCode::Delete) => {

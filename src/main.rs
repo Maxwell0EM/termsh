@@ -6,7 +6,7 @@ mod tui;
 fn main() {
     //use clap to read in the step file name
 
-    let filename = "test.step";
+    let filename = "Diec_4_Sphere.step";
 
     let _ = tui_start(String::from(filename));
 }
