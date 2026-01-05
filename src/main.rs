@@ -25,6 +25,9 @@ fn main() {
     if let Err(e) = termsh_run(args.step_file) {
         panic!("{}", e)
     }
+
+    //next: save a termsh_cache.json to store Physical Name and Physical IDs in current folder
+    //and when start, load these Physical Names and Physical IDs
 }
 
 #[derive(Parser, Debug)]
