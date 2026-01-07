@@ -35,6 +35,10 @@ pub fn termsh_run(geometry_filename: String) -> io::Result<()> {
             panic!("Failed to kill Gmsh: {}", e)
         }
     }
+
+    //Save Physical Name and Physical IDs to termsh_cache.json
+    tui.gmesh_para.save_cache();
+
     // clean up temporary file
     if let Err(e) = fs::remove_file(temp_file_name) {
         panic!("Failed to clean up: {}", e)

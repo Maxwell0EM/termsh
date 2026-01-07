@@ -36,9 +36,3 @@ struct CliArgs {
     #[arg(index = 1)]
     step_file: String,
 }
-
-//use serde to serial/deserial to termsh_cache.json
-struct PhysPairs {
-    vol_pairs: Vec<[String; 2]>,
-    sur_pairs: Vec<[String; 2]>,
-}

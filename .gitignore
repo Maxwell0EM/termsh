@@ -2,3 +2,4 @@
 *.step
 *.geo
 *.nas
+termsh_cache.json
