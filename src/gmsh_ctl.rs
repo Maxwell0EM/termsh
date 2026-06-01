@@ -61,7 +61,7 @@ impl GmshPara {
                 new_gmsh_para.vol_phy_list.push(VolPhys {
                     name: vol_pair.name,
                     phys_id: vol_pair.phys_id,
-                    vol_ids: String::new(),
+                    vol_ids: vol_pair.content,
                 });
             }
 
@@ -69,7 +69,7 @@ impl GmshPara {
                 new_gmsh_para.surf_phy_list.push(SurfPhys {
                     name: sur_pair.name,
                     phys_id: sur_pair.phys_id,
-                    surf_ids: String::new(),
+                    surf_ids: sur_pair.content,
                 });
             }
         }
@@ -258,6 +258,7 @@ impl GmshPara {
             phys_pair_list.vol_pairs.push(PhysPair {
                 name: vol_phys.name,
                 phys_id: vol_phys.phys_id,
+                content: vol_phys.vol_ids,
             });
         }
 
@@ -265,6 +266,7 @@ impl GmshPara {
             phys_pair_list.sur_pairs.push(PhysPair {
                 name: sur_phys.name,
                 phys_id: sur_phys.phys_id,
+                content: sur_phys.surf_ids,
             });
         }
 
@@ -279,6 +281,7 @@ impl GmshPara {
 struct PhysPair {
     name: String,
     phys_id: String,
+    content: String,
 }
 
 //use serde to serial/deserial to termsh_cache.json
