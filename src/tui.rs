@@ -175,6 +175,27 @@ impl TUI {
                 (KeyEventKind::Press, KeyCode::Backspace | KeyCode::Delete) => {
                     self.delete_selected()
                 }
+
+                (KeyEventKind::Press, KeyCode::Char('c') | KeyCode::Char('C')) => {
+                    self.gmesh_para
+                        .surf_phy_list
+                        .iter_mut()
+                        .for_each(|surf_phys| surf_phys.surf_ids = String::new());
+                    self.gmesh_para
+                        .vol_phy_list
+                        .iter_mut()
+                        .for_each(|vol_phys| vol_phys.vol_ids = String::new());
+
+                    if let Some(mut child) = self.gmsh_handle.take() {
+                        //kill the previous Gmsh Child Process first
+                        if let Err(e) = child.kill() {
+                            panic!("{}", e)
+                        }
+                    }
+                    if let Ok(gmsh_handle) = self.gmesh_para.apply_mesh().0 {
+                        self.gmsh_handle = Some(gmsh_handle);
+                    }
+                }
                 _ => {}
             },
             OperaMode::Modify => match (key_evt.kind, key_evt.code) {
@@ -789,7 +810,7 @@ impl Widget for &mut TUI {
 
         match self.opreation_mode {
             OperaMode::Select => {
-                Line::from("| Esc: quit | ↑↓←→: select | Enter: modify | A: apply to Gmsh | Ctrl+A: apply & save to .nas |")
+                Line::from("| Esc: quit | ↑↓←→: select | Enter: modify | A: apply to Gmsh | Ctrl+A: apply & save to .nas | C: clear content |")
                     .yellow()
                     .render(bottom_right, buf);
             }
